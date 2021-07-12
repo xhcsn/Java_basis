@@ -150,3 +150,637 @@ public class BookService {
 
 应用程序组件既可以在Spring的IoC容器中运行，也可以自己编写代码自行组装配置；
 测试的时候并不依赖Spring容器，可单独进行测试，大大提高了开发效率。
+
+##### 装配Bean
+如何使用IoC容器？装配好的Bean又如何使用？
+
+首先，我们用Maven创建工程并引入spring-context依赖：
+
+我们先编写一个MailService，用于在用户登录和注册成功后发送邮件通知：
+
+```java
+public class MailService {
+    private ZoneId zoneId = ZoneId.systemDefault();
+
+    public void setZoneId(ZoneId zoneId) {
+        this.zoneId = zoneId;
+    }
+
+    public String getTime() {
+        return ZonedDateTime.now(this.zoneId).format(DateTimeFormatter.ISO_ZONED_DATE_TIME);
+    }
+
+    public void sendLoginMail(User user) {
+        System.err.println(String.format("Hi, %s! You are logged in at %s", user.getName(), getTime()));
+    }
+
+    public void sendRegistrationMail(User user) {
+        System.err.println(String.format("Welcome, %s!", user.getName()));
+
+    }
+}
+
+```
+
+再编写一个UserService，实现用户注册和登录：
+
+```java
+
+public class UserService {
+    private MailService mailService;
+
+    public void setMailService(MailService mailService) {
+        this.mailService = mailService;
+    }
+
+    private List<User> users = new ArrayList<>(List.of( // users:
+            new User(1, "bob@example.com", "password", "Bob"), // bob
+            new User(2, "alice@example.com", "password", "Alice"), // alice
+            new User(3, "tom@example.com", "password", "Tom"))); // tom
+
+    public User login(String email, String password) {
+        for (User user : users) {
+            if (user.getEmail().equalsIgnoreCase(email) && user.getPassword().equals(password)) {
+                mailService.sendLoginMail(user);
+                return user;
+            }
+        }
+        throw new RuntimeException("login failed.");
+    }
+
+    public User getUser(long id) {
+        return this.users.stream().filter(user -> user.getId() == id).findFirst().orElseThrow();
+    }
+
+    public User register(String email, String password, String name) {
+        users.forEach((user) -> {
+            if (user.getEmail().equalsIgnoreCase(email)) {
+                throw new RuntimeException("email exist.");
+            }
+        });
+        User user = new User(users.stream().mapToLong(u -> u.getId()).max().getAsLong() + 1, email, password, name);
+        users.add(user);
+        mailService.sendRegistrationMail(user);
+        return user;
+    }
+```
+**注意到UserService通过setMailService()注入了一个MailService。**
+
+然后，我们需要编写一个特定的application.xml配置文件，告诉Spring的IoC容器应该如何创建并组装Bean：
+
+```XML
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.springframework.org/schema/beans
+        https://www.springframework.org/schema/beans/spring-beans.xsd">
+
+    <bean id="userService" class="com.itranswarp.learnjava.service.UserService">
+        <property name="mailService" ref="mailService" />
+    </bean>
+
+    <bean id="mailService" class="com.itranswarp.learnjava.service.MailService" />
+</beans>
+```
+
+把上述XML配置文件用Java代码写出来，就像这样：
+
+```java
+
+UserService userService = new UserService();
+MailService mailService = new MailService();
+userService.setMailService(mailService);
+```
+
+最后一步，我们需要创建一个Spring的IoC容器实例，然后加载配置文件，让Spring容器为我们创建并装配好配置文件中指定的所有Bean，这只需要一行代码
+
+```java
+ApplicationContext context = new ClassPathXmlApplicationContext("application.xml");
+
+//接下来，我们就可以从Spring容器中“取出”装配好的Bean然后使用它：
+
+// 获取Bean:
+UserService userService = context.getBean(UserService.class);
+// 正常调用:
+User user = userService.login("bob@example.com", "password");
+```
+
+完整的main()方法如下：
+```java
+public class Main {
+    public static void main(String[] args) {
+        ApplicationContext context = new ClassPathXmlApplicationContext("application.xml");
+        UserService userService = context.getBean(UserService.class);
+        User user = userService.login("bob@example.com", "password");
+        System.out.println(user.getName());
+    }
+}
+```
+###### ApplicationContext
+
+Spring容器就是ApplicationContext，它是一个接口，有很多实现类，这里我们选择ClassPathXmlApplicationContext，表示它会自动从classpath中查找指定的XML配置文件。
+
+获得了ApplicationContext的实例，就获得了IoC容器的引用。
+
+Spring还提供另一种IoC容器叫BeanFactory，使用方式和ApplicationContext类似：
+
+```java
+BeanFactory factory = new XmlBeanFactory(new ClassPathResource("application.xml"));
+MailService mailService = factory.getBean(MailService.class);
+```
+
+BeanFactory和ApplicationContext的区别在于，BeanFactory的实现是按需创建，即第一次获取Bean时才创建这个Bean，而ApplicationContext会一次性创建所有的Bean。实际上，ApplicationContext接口是从BeanFactory接口继承而来的，并且，ApplicationContext提供了一些额外的功能，包括国际化支持、事件和通知机制等。通常情况下，我们总是使用ApplicationContext，很少会考虑使用BeanFactory。
+
+
+##### 使用Annotation配置
+
+使用Spring的IoC容器，实际上就是通过类似XML这样的配置文件，把我们自己的Bean的依赖关系描述出来，然后让容器来创建并装配Bean。一旦容器初始化完毕，我们就直接从容器中获取Bean使用它们。
+
+使用XML配置的优点是所有的Bean都能一目了然地列出来，并通过配置注入能直观地看到每个Bean的依赖。它的缺点是写起来非常繁琐，每增加一个组件，就必须把新的Bean配置到XML中。
+
+有没有其他更简单的配置方式呢？
+
+有！我们可以使用Annotation配置，可以完全不需要XML，让Spring自动扫描Bean并组装它们。
+
+我们把上一节的示例改造一下，先删除XML配置文件，然后，给UserService和MailService添加几个注解。
+
+首先，我们给MailService添加一个@Component注解：
+
+```java
+@Component
+public class MailService {
+    ...
+}
+```
+
+
+这个@Component注解就相当于定义了一个Bean，它有一个可选的名称，默认是mailService，即小写开头的类名。
+
+然后，我们给UserService添加一个@Component注解和一个@Autowired注解：
+
+
+```java
+@Component
+public class UserService {
+    @Autowired
+    MailService mailService;
+
+    ...
+}
+```
+
+使用@Autowired就相当于把指定类型的Bean注入到指定的字段中。和XML配置相比，@Autowired大幅简化了注入，因为它不但可以写在set()方法上，还可以直接写在字段上，甚至可以写在构造方法中：
+
+
+```java
+@Component
+public class UserService {
+    MailService mailService;
+
+    public UserService(@Autowired MailService mailService) {
+        this.mailService = mailService;
+    }
+    ...
+}
+```
+
+我们一般把@Autowired写在字段上，通常使用package权限的字段，便于测试。
+
+
+##### 定制Bean
+
+###### Scope
+
+对于Spring容器来说，当我们把一个Bean标记为@Component后，它就会自动为我们创建一个单例（Singleton），即容器初始化时创建Bean，容器关闭前销毁Bean。在容器运行期间，我们调用getBean(Class)获取到的Bean总是同一个实例。
+
+还有一种Bean，我们每次调用getBean(Class)，容器都返回一个新的实例，这种Bean称为Prototype（原型），它的生命周期显然和Singleton不同。声明一个Prototype的Bean时，需要添加一个额外的@Scope注解：
+```java
+@Component
+@Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE) // @Scope("prototype")
+public class MailSession {
+    ...
+}
+```
+
+###### 注入List
+
+有些时候，我们会有一系列接口相同，不同实现类的Bean。例如，注册用户时，我们要对email、password和name这3个变量进行验证。为了便于扩展，我们先定义验证接口：
+
+```java
+public interface Validator {
+    void validate(String email, String password, String name);
+}
+```
+
+然后，分别使用3个Validator对用户参数进行验证：
+
+```java
+@Component
+public class EmailValidator implements Validator {
+    public void validate(String email, String password, String name) {
+        if (!email.matches("^[a-z0-9]+\\@[a-z0-9]+\\.[a-z]{2,10}$")) {
+            throw new IllegalArgumentException("invalid email: " + email);
+        }
+    }
+}
+
+@Component
+public class PasswordValidator implements Validator {
+    public void validate(String email, String password, String name) {
+        if (!password.matches("^.{6,20}$")) {
+            throw new IllegalArgumentException("invalid password");
+        }
+    }
+}
+
+@Component
+public class NameValidator implements Validator {
+    public void validate(String email, String password, String name) {
+        if (name == null || name.isBlank() || name.length() > 20) {
+            throw new IllegalArgumentException("invalid name: " + name);
+        }
+    }
+}
+```
+
+最后，我们通过一个Validators作为入口进行验证：
+
+```java
+@Component
+public class Validators {
+    @Autowired
+    List<Validator> validators;
+
+    public void validate(String email, String password, String name) {
+        for (var validator : this.validators) {
+            validator.validate(email, password, name);
+        }
+    }
+}
+```
+
+注意到Validators被注入了一个List<Validator>，Spring会自动把所有类型为Validator的Bean装配为一个List注入进来，这样一来，我们每新增一个Validator类型，就自动被Spring装配到Validators中了，非常方便。
+
+因为Spring是通过扫描classpath获取到所有的Bean，而List是有序的，要指定List中Bean的顺序，可以加上@Order注解：
+
+```java
+@Component
+@Order(1)
+public class EmailValidator implements Validator {
+    ...
+}
+
+@Component
+@Order(2)
+public class PasswordValidator implements Validator {
+    ...
+}
+
+@Component
+@Order(3)
+public class NameValidator implements Validator {
+    ...
+}
+```
+
+###### 可选注入
+
+默认情况下，当我们标记了一个@Autowired后，Spring如果没有找到对应类型的Bean，它会抛出NoSuchBeanDefinitionException异常。
+
+可以给@Autowired增加一个required = false的参数：
+
+```java
+@Component
+public class MailService {
+    @Autowired(required = false)
+    ZoneId zoneId = ZoneId.systemDefault();
+    ...
+}
+```
+
+这个参数告诉Spring容器，如果找到一个类型为ZoneId的Bean，就注入，如果找不到，就忽略。
+
+这种方式非常适合有定义就使用定义，没有就使用默认值的情况。
+
+
+###### 创建第三方Bean
+如果一个Bean不在我们自己的package管理之内，例如ZoneId，如何创建它？
+
+答案是我们自己在@Configuration类中编写一个Java方法创建并返回它，注意给方法标记一个@Bean注解：
+
+```java
+@Configuration
+@ComponentScan
+public class AppConfig {
+    // 创建一个Bean:
+    @Bean
+    ZoneId createZoneId() {
+        return ZoneId.of("Z");
+    }
+}
+```
+Spring对标记为@Bean的方法只调用一次，因此返回的Bean仍然是单例。
+
+###### 初始化和销毁
+有些时候，一个Bean在注入必要的依赖后，需要进行初始化（监听消息等）。在容器关闭时，有时候还需要清理资源（关闭连接池等）。我们通常会定义一个init()方法进行初始化，定义一个shutdown()方法进行清理，然后，引入JSR-250定义的Annotation：
+
+```xml
+<dependency>
+    <groupId>javax.annotation</groupId>
+    <artifactId>javax.annotation-api</artifactId>
+    <version>1.3.2</version>
+</dependency>
+```
+
+在Bean的初始化和清理方法上标记@PostConstruct和@PreDestroy：
+
+
+```java
+@Component
+public class MailService {
+    @Autowired(required = false)
+    ZoneId zoneId = ZoneId.systemDefault();
+
+    @PostConstruct
+    public void init() {
+        System.out.println("Init mail service with zoneId = " + this.zoneId);
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        System.out.println("Shutdown mail service");
+    }
+}
+```
+
+Spring容器会对上述Bean做如下初始化流程：
+
+- 调用构造方法创建MailService实例；
+- 根据@Autowired进行注入；
+- 调用标记有@PostConstruct的init()方法进行初始化。
+- 而销毁时，容器会首先调用标记有@PreDestroy的shutdown()方法。
+
+
+###### 使用别名
+默认情况下，对一种类型的Bean，容器只创建一个实例。但有些时候，我们需要对一种类型的Bean创建多个实例。例如，同时连接多个数据库，就必须创建多个DataSource实例。
+
+如果我们在@Configuration类中创建了多个同类型的Bean,Spring会报NoUniqueBeanDefinitionException异常，意思是出现了重复的Bean定义。这个时候，需要给每个Bean添加不同的名字：
+
+```java
+@Configuration
+@ComponentScan
+public class AppConfig {
+    @Bean("z")
+    ZoneId createZoneOfZ() {
+        return ZoneId.of("Z");
+    }
+
+    @Bean
+    @Qualifier("utc8")
+    ZoneId createZoneOfUTC8() {
+        return ZoneId.of("UTC+08:00");
+    }
+}
+```
+
+可以用@Bean("name")指定别名，也可以用@Bean+@Qualifier("name")指定别名。
+
+存在多个同类型的Bean时，注入ZoneId又会报错.
+
+意思是期待找到唯一的ZoneId类型Bean，但是找到两。因此，注入时，要指定Bean的名称：
+
+```java
+@Component
+public class MailService {
+	@Autowired(required = false)
+	@Qualifier("z") // 指定注入名称为"z"的ZoneId
+	ZoneId zoneId = ZoneId.systemDefault();
+    ...
+}
+```
+
+还有一种方法是把其中某个Bean指定为@Primary：
+
+```java
+@Configuration
+@ComponentScan
+public class AppConfig {
+    @Bean
+    @Primary // 指定为主要Bean
+    @Qualifier("z")
+    ZoneId createZoneOfZ() {
+        return ZoneId.of("Z");
+    }
+
+    @Bean
+    @Qualifier("utc8")
+    ZoneId createZoneOfUTC8() {
+        return ZoneId.of("UTC+08:00");
+    }
+}
+```
+这样，在注入时，如果没有指出Bean的名字，Spring会注入标记有@Primary的Bean。这种方式也很常用。例如，对于主从两个数据源，通常将主数据源定义为@Primary。
+
+```java
+@Configuration
+@ComponentScan
+public class AppConfig {
+    @Bean
+    @Primary
+    DataSource createMasterDataSource() {
+        ...
+    }
+
+    @Bean
+    @Qualifier("slave")
+    DataSource createSlaveDataSource() {
+        ...
+    }
+}
+```
+
+###### 使用FactoryBean
+
+我们在设计模式的工厂方法中讲到，很多时候，可以通过工厂模式创建对象。Spring也提供了工厂模式，允许定义一个工厂，然后由工厂创建真正的Bean。
+
+用工厂模式创建Bean需要实现FactoryBean接口。我们观察下面的代码：
+
+```java
+@Component
+public class ZoneIdFactoryBean implements FactoryBean<ZoneId> {
+
+    String zone = "Z";
+
+    @Override
+    public ZoneId getObject() throws Exception {
+        return ZoneId.of(zone);
+    }
+
+    @Override
+    public Class<?> getObjectType() {
+        return ZoneId.class;
+    }
+}
+```
+当一个Bean实现了FactoryBean接口后，Spring会先实例化这个工厂，然后调用getObject()创建真正的Bean。getObjectType()可以指定创建的Bean的类型，因为指定类型不一定与实际类型一致，可以是接口或抽象类。
+
+因此，如果定义了一个FactoryBean，要注意Spring创建的Bean实际上是这个FactoryBean的getObject()方法返回的Bean。为了和普通Bean区分，我们通常都以XxxFactoryBean命名。
+
+##### 使用Resource
+
+我们经常会读取配置文件、资源文件等。使用Spring容器时，我们也可以把“文件”注入进来，方便程序读取。
+
+AppService需要读取logo.txt这个文件，通常情况下，我们需要写很多繁琐的代码，主要是为了定位文件，打开InputStream。
+
+Spring提供了一个org.springframework.core.io.Resource（注意不是javax.annotation.Resource），它可以像String、int一样使用@Value注入：
+
+```java
+@Component
+public class AppService {
+    @Value("classpath:/logo.txt")
+    private Resource resource;
+
+    private String logo;
+
+    @PostConstruct
+    public void init() throws IOException {
+        try (var reader = new BufferedReader(
+                new InputStreamReader(resource.getInputStream(), StandardCharsets.UTF_8))) {
+            this.logo = reader.lines().collect(Collectors.joining("\n"));
+        }
+    }
+}
+```
+
+注入Resource最常用的方式是通过classpath，即类似classpath:/logo.txt表示在classpath中搜索logo.txt文件，然后，我们直接调用Resource.getInputStream()就可以获取到输入流，避免了自己搜索文件的代码。
+
+
+##### 注入配置
+
+在开发应用程序时，经常需要读取配置文件。最常用的配置方法是以key=value的形式写在.properties文件中。
+
+Spring容器还提供了一个更简单的@PropertySource来自动读取配置文件。我们只需要在@Configuration配置类上再添加一个注解：
+
+```java
+@Configuration
+@ComponentScan
+@PropertySource("app.properties") // 表示读取classpath的app.properties
+public class AppConfig {
+    @Value("${app.zone:Z}")
+    String zoneId;
+
+    @Bean
+    ZoneId createZoneId() {
+        return ZoneId.of(zoneId);
+    }
+}
+```
+可见，先使用@PropertySource读取配置文件，然后通过@Value以${key:defaultValue}的形式注入，可以极大地简化读取配置的麻烦。
+
+```java
+@Component
+public class SmtpConfig {
+    @Value("${smtp.host}")
+    private String host;
+
+    @Value("${smtp.port:25}")
+    private int port;
+
+    public String getHost() {
+        return host;
+    }
+
+    public int getPort() {
+        return port;
+    }
+}
+```
+
+##### 使用条件装配
+
+Spring为应用程序准备了Profile这一概念，用来表示不同的环境。例如，我们分别定义开发、测试和生产这3个环境：
+
+- native
+- test
+- production
+
+
+创建某个Bean时，Spring容器可以根据注解@Profile来决定是否创建。例如，以下配置：
+
+```java
+@Configuration
+@ComponentScan
+public class AppConfig {
+    @Bean
+    @Profile("!test")
+    ZoneId createZoneId() {
+        return ZoneId.systemDefault();
+    }
+
+    @Bean
+    @Profile("test")
+    ZoneId createZoneIdForTest() {
+        return ZoneId.of("America/New_York");
+    }
+}
+```
+
+###### 使用Conditional
+
+除了根据@Profile条件来决定是否创建某个Bean外，Spring还可以根据@Conditional决定是否创建某个Bean。
+
+例如，我们对SmtpMailService添加如下注解：
+
+```java
+@Component
+@Conditional(OnSmtpEnvCondition.class)
+public class SmtpMailService implements MailService {
+    ...
+}
+```
+
+它的意思是，如果满足OnSmtpEnvCondition的条件，才会创建SmtpMailService这个Bean。OnSmtpEnvCondition的条件是什么呢？我们看一下代码：
+```java
+public class OnSmtpEnvCondition implements Condition {
+    public boolean matches(ConditionContext context, AnnotatedTypeMetadata metadata) {
+        return "true".equalsIgnoreCase(System.getenv("smtp"));
+    }
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
