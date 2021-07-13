@@ -748,6 +748,405 @@ public class OnSmtpEnvCondition implements Condition {
 }
 ```
 
+### 使用AOP
+
+AOP即面向切面编程。
+
+而AOP是一种新的编程方式，它和OOP不同，OOP把系统看作多个对象的交互，AOP把系统分解为不同的关注点，或者称之为切面（Aspect）。
+
+对于每个业务方法，例如，createBook()，除了业务逻辑，还需要安全检查、日志记录和事务处理，它的代码像这样：
+
+```java
+public class BookService {
+    public void createBook(Book book) {
+        securityCheck();
+        Transaction tx = startTransaction();
+        try {
+            // 核心业务逻辑
+            tx.commit();
+        } catch (RuntimeException e) {
+            tx.rollback();
+            throw e;
+        }
+        log("created book: " + book);
+    }
+}
+```
+
+继续编写updateBook()，代码如下：
+
+```java
+public class BookService {
+    public void updateBook(Book book) {
+        securityCheck();
+        Transaction tx = startTransaction();
+        try {
+            // 核心业务逻辑
+            tx.commit();
+        } catch (RuntimeException e) {
+            tx.rollback();
+            throw e;
+        }
+        log("updated book: " + book);
+    }
+}
+```
+
+如果我们以AOP的视角来编写上述业务，可以依次实现：
+
+- 核心逻辑，即BookService；
+- 切面逻辑，即：
+- 权限检查的Aspect；
+- 日志的Aspect；
+- 事务的Aspect。
+
+
+如何把切面织入到核心逻辑中？这正是AOP需要解决的问题。换句话说，如果客户端获得了BookService的引用，当调用bookService.createBook()时，如何对调用方法进行拦截，并在拦截前后进行安全检查、日志、事务等处理，就相当于完成了所有业务功能。
+
+在Java平台上，对于AOP的织入，有3种方式：
+
+1. 编译期：在编译时，由编译器把切面调用编译进字节码，这种方式需要定义新的关键字并扩展编译器，AspectJ就扩展了Java编译器，使用关键字aspect来实现织入；
+2. 类加载器：在目标类被装载到JVM时，通过一个特殊的类加载器，对目标类的字节码重新“增强”；
+3. 运行期：目标对象和切面都是普通Java类，通过JVM的动态代理功能或者第三方库实现运行期动态织入。
+
+
+最简单的方式是第三种，Spring的AOP实现就是基于JVM的动态代理。由于JVM的动态代理要求必须实现接口，如果一个普通类没有业务接口，就需要通过CGLIB或者Javassist这些第三方库实现。
+
+##### 装配AOP
+
+在AOP编程中，我们经常会遇到下面的概念：
+
+- Aspect：切面，即一个横跨多个核心逻辑的功能，或者称之为系统关注点；
+- Joinpoint：连接点，即定义在应用程序流程的何处插入切面的执行；
+- Pointcut：切入点，即一组连接点的集合；
+- Advice：增强，指特定连接点上执行的动作；
+- Introduction：引介，指为一个已有的Java对象动态地增加新的接口；
+- Weaving：织入，指将切面整合到程序的执行流程中；
+- Interceptor：拦截器，是一种实现增强的方式；
+- Target Object：目标对象，即真正执行业务的核心逻辑对象；
+- AOP Proxy：AOP代理，是客户端持有的增强后的对象引用。
+
+
+**AOP本质上只是一种代理模式的实现方式**
+
+
+我们以UserService和MailService为例，这两个属于核心业务逻辑，现在，我们准备给UserService的每个业务方法执行前添加日志，给MailService的每个业务方法执行前后添加日志，在Spring中，需要以下步骤：
+
+首先，我们通过Maven引入Spring对AOP的支持：
+
+```xml
+<dependency>
+    <groupId>org.springframework</groupId>
+    <artifactId>spring-aspects</artifactId>
+    <version>${spring.version}</version>
+</dependency>
+```
+
+上述依赖会自动引入AspectJ，使用AspectJ实现AOP比较方便，因为它的定义比较简单。
+
+然后，我们定义一个LoggingAspect：
+
+```java
+//定义一个切面
+@Aspect
+@Component
+public class LoggingAspect {
+    // 在执行UserService的每个方法前执行:
+    @Before("execution(public * com.itranswarp.learnjava.service.UserService.*(..))")
+    public void doAccessCheck() {
+        System.err.println("[Before] do access check...");
+    }
+
+    // 在执行MailService的每个方法前后执行:
+    @Around("execution(public * com.itranswarp.learnjava.service.MailService.*(..))")
+    public Object doLogging(ProceedingJoinPoint pjp) throws Throwable {
+        System.err.println("[Around] start " + pjp.getSignature());
+        Object retVal = pjp.proceed();
+        System.err.println("[Around] done " + pjp.getSignature());
+        return retVal;
+    }
+}
+```
+
+观察doAccessCheck()方法，我们定义了一个@Before注解，后面的字符串是告诉AspectJ应该在何处执行该方法，这里写的意思是：执行UserService的每个public方法前执行doAccessCheck()代码。
+
+再观察doLogging()方法，我们定义了一个@Around注解，它和@Before不同，@Around可以决定是否执行目标方法，因此，我们在doLogging()内部先打印日志，再调用方法，最后打印日志后返回结果。
+
+在LoggingAspect类的声明处，除了用@Component表示它本身也是一个Bean外，我们再加上@Aspect注解，表示它的@Before标注的方法需要注入到UserService的每个public方法执行前，@Around标注的方法需要注入到MailService的每个public方法执行前后。
+
+紧接着，我们需要给@Configuration类加上一个@EnableAspectJAutoProxy注解：
+
+
+
+```java
+@Configuration
+@ComponentScan
+@EnableAspectJAutoProxy
+public class AppConfig {
+    ...
+}
+```
+
+LoggingAspect.doAccessCheck()为例，要把它注入到UserService的每个public方法中，最简单的方法是编写一个子类，并持有原始实例的引用：
+
+```java
+public UserServiceAopProxy extends UserService {
+    private UserService target;
+    private LoggingAspect aspect;
+
+    public UserServiceAopProxy(UserService target, LoggingAspect aspect) {
+        this.target = target;
+        this.aspect = aspect;
+    }
+
+    public User login(String email, String password) {
+        // 先执行Aspect的代码:
+        aspect.doAccessCheck();
+        // 再执行UserService的逻辑:
+        return target.login(email, password);
+    }
+
+    public User register(String email, String password, String name) {
+        aspect.doAccessCheck();
+        return target.register(email, password, name);
+    }
+
+    ...
+}
+```
+
+
+可见，虽然Spring容器内部实现AOP的逻辑比较复杂（需要使用AspectJ解析注解，并通过CGLIB实现代理类），但我们使用AOP非常简单，一共需要三步：
+
+1. 定义执行方法，并在方法上通过AspectJ的注解告诉Spring应该在何处调用此方法；
+2. 标记@Component和@Aspect；
+3. 在@Configuration类上标注@EnableAspectJAutoProxy。
+
+
+
+###### 拦截器类型
+顾名思义，拦截器有以下类型：
+
+1. @Before：这种拦截器先执行拦截代码，再执行目标代码。如果拦截器抛异常，那么目标代码就不执行了；
+
+2. @After：这种拦截器先执行目标代码，再执行拦截器代码。无论目标代码是否抛异常，拦截器代码都会执行；
+
+3. @AfterReturning：和@After不同的是，只有当目标代码正常返回时，才执行拦截器代码；
+
+4. @AfterThrowing：和@After不同的是，只有当目标代码抛出了异常时，才执行拦截器代码；
+
+5. @Around：能完全控制目标代码是否执行，并可以在执行前后、抛异常后执行任意拦截代码，可以说是包含了上面所有功能。
+
+##### 使用注解装配AOP
+
+Spring提供的@Transactional就是一个非常好的例子。如果我们自己写的Bean希望在一个数据库事务中被调用，就标注上@Transactional
+
+```java
+@Component
+public class UserService {
+    // 有事务:
+    @Transactional
+    public User createUser(String name) {
+        ...
+    }
+
+    // 无事务:
+    public boolean isValidName(String name) {
+        ...
+    }
+
+    // 有事务:
+    @Transactional
+    public void updateUser(User user) {
+        ...
+    }
+}
+```
+
+或者直接在class级别注解，表示“所有public方法都被安排了”：
+
+```java
+@Component
+@Transactional
+public class UserService {
+    ...
+}
+```
+
+通过@Transactional，某个方法是否启用了事务就一清二楚了。因此，装配AOP的时候，使用注解是最好的方式。
+
+我们以一个实际例子演示如何使用注解实现AOP装配。为了监控应用程序的性能，我们定义一个性能监控的注解：
+
+```java
+@Target(METHOD)
+@Retention(RUNTIME)
+public @interface MetricTime {
+    String value();
+}
+```
+
+在需要被监控的关键方法上标注该注解：
+```java
+@Component
+public class UserService {
+    // 监控register()方法性能:
+    @MetricTime("register")
+    public User register(String email, String password, String name) {
+        ...
+    }
+    ...
+}
+```
+
+然后，我们定义MetricAspect：
+
+```java
+@Aspect
+@Component
+public class MetricAspect {
+    @Around("@annotation(metricTime)")
+    public Object metric(ProceedingJoinPoint joinPoint, MetricTime metricTime) throws Throwable {
+        String name = metricTime.value();
+        long start = System.currentTimeMillis();
+        try {
+            return joinPoint.proceed();
+        } finally {
+            long t = System.currentTimeMillis() - start;
+            // 写入日志或发送至JMX:
+            System.err.println("[Metrics] " + name + ": " + t + "ms");
+        }
+    }
+}
+```
+
+### 访问数据库
+
+##### 使用JDBC
+
+Java程序使用JDBC接口访问关系数据库的时候，需要以下几步：
+
+- 创建全局DataSource实例，表示数据库连接池；
+- 在需要读写数据库的方法内部，按如下步骤访问数据库：
+    - 从全局DataSource实例获取Connection实例；
+    - 通过Connection实例创建PreparedStatement实例；
+    - 执行SQL语句，如果是查询，则通过ResultSet读取结果集，如果是修改，则获得int结果。
+
+在Spring使用JDBC，首先我们通过IoC容器创建并管理一个DataSource实例，然后，Spring提供了一个JdbcTemplate，可以方便地让我们操作JDBC，因此，通常情况下，我们会实例化一个JdbcTemplate。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
