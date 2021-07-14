@@ -1021,7 +1021,7 @@ public class MetricAspect {
 
 ### 访问数据库
 
-##### 使用JDBC
+###### 使用JDBC
 
 Java程序使用JDBC接口访问关系数据库的时候，需要以下几步：
 
@@ -1033,21 +1033,122 @@ Java程序使用JDBC接口访问关系数据库的时候，需要以下几步：
 
 在Spring使用JDBC，首先我们通过IoC容器创建并管理一个DataSource实例，然后，Spring提供了一个JdbcTemplate，可以方便地让我们操作JDBC，因此，通常情况下，我们会实例化一个JdbcTemplate。
 
+###### 使用声明式事务
 
+在Spring中操作事务，没必要手写JDBC事务，可以使用Spring提供的高级接口来操作事务。
 
+Spring提供了一个PlatformTransactionManager来表示事务管理器，所有的事务都由它负责管理。而事务由TransactionStatus表示。如果手写事务代码，使用try...catch如下：
 
+```java
+TransactionStatus tx = null;
+try {
+    // 开启事务:
+    tx = txManager.getTransaction(new DefaultTransactionDefinition());
+    // 相关JDBC操作:
+    jdbcTemplate.update("...");
+    jdbcTemplate.update("...");
+    // 提交事务:
+    txManager.commit(tx);
+} catch (RuntimeException e) {
+    // 回滚事务:
+    txManager.rollback(tx);
+    throw e;
+}
+```
 
+Spring为了同时支持JDBC和JTA两种事务模型，就抽象出PlatformTransactionManager。因为我们的代码只需要JDBC事务，因此，在AppConfig中，需要再定义一个PlatformTransactionManager对应的Bean，它的实际类型是DataSourceTransactionManager：
 
+```java
+@Configuration
+@ComponentScan
+@PropertySource("jdbc.properties")
+public class AppConfig {
+    ...
+    @Bean
+    PlatformTransactionManager createTxManager(@Autowired DataSource dataSource) {
+        return new DataSourceTransactionManager(dataSource);
+    }
+}
+```
 
+使用编程的方式使用Spring事务仍然比较繁琐，更好的方式是通过声明式事务来实现。使用声明式事务非常简单，除了在AppConfig中追加一个上述定义的PlatformTransactionManager外，再加一个@EnableTransactionManagement就可以启用声明式事务：
 
+```java
+@Configuration
+@ComponentScan
+@EnableTransactionManagement // 启用声明式
+@PropertySource("jdbc.properties")
+public class AppConfig {
+    ...
+}
+```
 
+然后，对需要事务支持的方法，加一个@Transactional注解：
+```java
+@Component
+public class UserService {
+    // 此public方法自动具有事务支持:
+    @Transactional
+    public User register(String email, String password, String name) {
+       ...
+    }
+}
+```
 
+或者更简单一点，直接在Bean的class处加上，表示所有public方法都具有事务支持：
 
+```java
+@Component
+@Transactional
+public class UserService {
+    ...
+}
+```
 
+###### 使用DAO
 
+在传统的多层应用程序中，通常是Web层调用业务层，业务层调用数据访问层。业务层负责处理各种业务逻辑，而数据访问层只负责对数据进行增删改查。因此，实现数据访问层就是用JdbcTemplate实现对数据库的操作。
 
+编写数据访问层的时候，可以使用DAO模式。DAO即Data Access Object的缩写，它没有什么神秘之处，实现起来基本如下：
 
+```java
+public class UserDao {
 
+    //自动注入
+    @Autowired
+    JdbcTemplate jdbcTemplate;
+
+    User getById(long id) {
+        ...
+    }
+
+    List<User> getUsers(int page) {
+        ...
+    }
+
+    User createUser(User user) {
+        ...
+    }
+
+    User updateUser(User user) {
+        ...
+    }
+
+    void deleteUser(User user) {
+        ...
+    }
+}
+```
+
+Spring提供了一个JdbcDaoSupport类，用于简化DAO的实现。这个JdbcDaoSupport没什么复杂的，核心代码就是持有一个JdbcTemplate：
+
+它的意图是子类直接从JdbcDaoSupport继承后，可以随时调用getJdbcTemplate()获得JdbcTemplate的实例。那么问题来了：因为JdbcDaoSupport的jdbcTemplate字段没有标记@Autowired，所以，子类想要注入JdbcTemplate，还得自己想个办法：
+
+可见，DAO模式就是一个简单的数据访问模式，是否使用DAO，根据实际情况决定，因为很多时候，直接在Service层操作数据库也是完全没有问题的。
+
+###### 继承MyBatis
+
+从ORM框架读取的User实例实际上并不是User类，而是代理类，代理类继承自User类，但针对每个setter方法做了覆写
 
 
 
