@@ -61,6 +61,96 @@ new一个Thread，线程进入了新建状态。调用start()方法，会启动�
 ## 12、对synchronized关键字的理解
 synchronized关键字解决的是多个线程之间访问资源的同步性，synchronized关键字可以保证被它修饰的方法或者代码块在任意时刻只能有一个线程执行。
 
+## 13、synchronized关键字的三种使用方式
+- 修饰实例方法：作用于当前对象实例加锁，进入同步代码块需要获得当前对象实例的锁
+- 修饰静态方法：给当前类加锁，作用于类的所有对象实例，进入同步代码块前要获得当前class的锁
+- 修饰代码块：指定加锁对象，对给定对象/类加锁，表示进入同步代码块前要获得给定对象的锁
+
+## 14、手写单例模式
+```java
+public class Singleton{
+    private volatile static Singleton uniqueInstance;
+    private Singleton（）{
+
+    }
+    public static Singleton getUniqueInstance(){
+        if(uniqueInstance == null){
+            synchronized(Singleton.class){
+                if(uniqueInstance == null){
+                    uniqueInstance = new Singleton();
+                }
+            }
+        }
+        return uniqueInstance;
+    }
+}
+```
+
+## 15、synchronized关键字的底层原理
+#### synchronized同步语句块的情况
+```java
+public class SynchronizedDemo{
+    public void method(){
+        synchronized(this){
+            System.out.println("synchronize代码块");
+        }
+    }
+}
+```
+
+synchronized同步语句块的实现使用的是monitorenter和monitorexit指令，其中monitorenter指令指向同步代码块的开始位置，monitorexit指令指向同步代码块的结束位置
+
+当执行monitorenter时，线程视图获取锁也就是获取对象监视器的持有权
+
+#### synchronized修饰方法的情况
+```java
+public class SynchronizedDemo2{
+    public synchronized void method(){
+        System.out.println("synchronized方法");
+    }
+}
+```
+synchronized修饰的方法并没有monitorenter指令和monitorexit指令，而是使用了ACC_SYNCHRONIZED标识，该标识指明了该方法是一个同步方法。
+
+本质而言都是对对象监视器monitor的获取。
+
+## 16、JDK1.6之后对synchronized关键字进行了哪些优化
+优化后synchronized锁可以分为：无锁状态，偏向锁状态，轻量级锁状态和重量级锁状态，锁可以升级但是不可以降级
+
+- 无锁：未进行加锁
+- 偏向锁：针对一个进程而言，如果没有发生锁的竞争，当前对象的锁是偏向于当前进程的。
+- 轻量级锁：当有两个线程竞争锁，当前锁就会进化成轻量级锁，但是此时资源的竞争不是很激烈，当A线程获取c对象，B线程获取不到c对象的锁就会进入自旋，不断尝试获取锁，因为竞争不激烈，所以在指定次数自旋内B线程就会获取轻量级锁，如果获取失败那么就会升级成重量级锁。
+- 重量级锁状态：获取不到资源的线程会阻塞
+
+## 17、synchronized和ReentrantLock的区别
+- 两者都是可重入锁
+- synchronized关键字依赖于JVM的实现，ReentrantLock依赖于API，即通过lock()、unlock()配合try/finally实现的
+- ReentrantLock比起synchronized增加了高级功能：
+  - 等待可中断，即正在等待的线程可以放弃等待转而处理其他事情
+  - 可实现公平锁：ReentrantLock可以指定公平锁还是非公平锁，synchronized只能是非公平锁。所谓的公平锁就是先等待的线程先获得锁
+  - 可以实现选择性通知：synchronized关键字与wait和notify方法相结合可以实现等待和通知、ReentrantLock可以通过Condition，选择性通知注册在指定Condition的所有等待线程
+
+## 18、并发编程的三个重要特性
+- 原子性：一组逻辑上的操作要么全部执行要么全部不执行
+- 可见性：当一个线程对共享变量进行了修改，其他的线程立即可以看到修改后的最新值
+- 有序性：代码在执行的过程中禁止指令重排
+
+## 19、ThreadLocal
+如果创建了一个ThreadLocal变量，那么访问这个变量的每个线程都会有这个变量的本地副本，可以使用get和set方法来获取默认值或者将其值更改为当前线程所存的副本的值，从而避免了线程安全问题。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
