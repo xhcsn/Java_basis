@@ -135,22 +135,150 @@ synchronized修饰的方法并没有monitorenter指令和monitorexit指令，而
 - 可见性：当一个线程对共享变量进行了修改，其他的线程立即可以看到修改后的最新值
 - 有序性：代码在执行的过程中禁止指令重排
 
-## 19、ThreadLocal
+## 19、ThreadLocal原理
 如果创建了一个ThreadLocal变量，那么访问这个变量的每个线程都会有这个变量的本地副本，可以使用get和set方法来获取默认值或者将其值更改为当前线程所存的副本的值，从而避免了线程安全问题。
 
+**本质**：最终的变量是放在了当前线程的ThreadLocalMap中，并不是存在ThreadLocal上。
 
+每个Thread都具备一个ThreadLocalMap，而ThreadLocalMap可以存放以ThreadLocal为kry，Object对象为value的键值对。
 
+## 20、ThreadLocal内存泄露问题
+ThreadLocalMap中使用的Key为ThreadLocal的弱引用，而value是强引用。所以，如果ThreadLocal没有被外部强引用的情况下，在垃圾回收的时候。key会被清理掉，而value不会被清理掉。这样一来，ThreadLocalMap中就会出现key为null的Entry，如果不做任何措施的话，value永远无法被GC回收，这个时候就有可能会产生内存泄露。
 
+## 21、为什么要使用线程池
+- 降低资源消耗
+- 提高响应速度
+- 提高线程的可管理性
 
+## 22、实现Runnable接口和Callable接口的区别
+Runnable接口不会返回结果或者抛出检查异常，但是Callable接口会返回结果或者抛出异常
 
+## 23、执行execute和submit方法的区别是什么
+- execute方法用于提交不需要返回值的任务，所以无法判断任务是否被线程池执行成功与否
+- submit方法用于提交需要返回值的任务。线程池会返回一个Future类型的对象，通过这个Future对象可以判断任务是否执行成功。并且可以通过Future的get方法来获取返回值，get方法会阻塞当前线程直到任务完成，而使用get(long timeout, TimeUnit unit)方法则会阻塞当前线程一段时间之后立即返回，这个时候有可能任务没有执行完
 
+## 24、如何创建线程池
+可以通过ThreadPoolExecutor的方式去创建，其中ThreadPoolExecutor中有三个最重要的参数:
+- corePoolSize：核心线程数 定义了最小可以同时运行的线程数量
+- maximumPoolSize：当队列中存放的任务达到队列容量的时候，当前可以同时运行的线程数量变为最大线程数
+- workQueue：当新任务来的时候会先判断当前运行的线程数量是否达到核心线程数，如果达到的话，新任务就会被存放在队列中
 
+其他参数：
+- keepAliveTime：当线程池中的线程数量大于核心线程数量的时候，核心线程以外的线程不会立即销毁，而是会等待，直到等待的时间超过了keepAliveTime才会被回收销毁
+- unit：keepAliveTime参数的时间单位
+- handler：饱和策略
 
+## 25、ThreadPoolExecutor饱和策略
+如果当前同时运行的线程数量达到了最大线程数量并且队列也已经被放满的时候，ThreadPoolExecutor会针对新来的线程定义一些策略：
+- ThreadPoolExecutor.AbortPolicy：来拒绝新任务的处理。
+- ThreadPoolExecutor.CallerRunsPolicy：直接在调用execute方法的线程中运行被拒绝的任务，如果执行程序已关闭，则会丢弃该任务。
+- ThreadPoolExecutor.DiscardPolicy：不处理新任务，直接丢弃掉。
+- ThreadPoolExecutor.DiscardOldestPolicy：此策略将丢弃最早的未处理的任务请求。
 
+## 26、手写一个简单的线程池
+首先创建一个Runnable接口的实现类
+```java
+//MyRunnable.java
 
+import java.util.Date;
 
+public class MyRunnable implements Runnable {
+    private String command;
+    public MyRunnable(String s) {
+        this.command = s;
+    }
+    @override
+    public void run() {
+        System.out.println(Thread.currentThread().getName() + " Start. Time = " + new Date());
+        processCommand();
+        System.out.println(Thread.currentThread().getName() + " End. Time = " + new Date());
+    }
+    private void processCommand() {
+        try {
+            Thread.sleep(5000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
 
+使用ThreadPoolExecutor构造函数自定义参数的方式来创建线程池。
 
+```java
+//ThreadPoolExecutorDemo.java
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+
+public class ThreadPoolExecutorDemo {
+
+    private static final int CORE_POOL_SIZE = 5;
+    private static final int MAX_POOL_SIZE = 10;
+    private static final int QUEUE_CAPACITY = 100;
+    private static final Long KEEP_ALIVE_TIME = 1L;
+    public static void main(String[] args) {
+
+        //使用阿里巴巴推荐的创建线程池的方式
+        //通过ThreadPoolExecutor构造函数自定义参数创建
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
+                CORE_POOL_SIZE,
+                MAX_POOL_SIZE,
+                KEEP_ALIVE_TIME,
+                TimeUnit.SECONDS,
+                new ArrayBlockingQueue<>(QUEUE_CAPACITY),
+                new ThreadPoolExecutor.CallerRunsPolicy());
+
+        for (int i = 0; i < 10; i++) {
+            //创建WorkerThread对象（WorkerThread类实现了Runnable 接口）
+            Runnable worker = new MyRunnable("" + i);
+            //执行Runnable
+            executor.execute(worker);
+        }
+        //终止线程池
+        executor.shutdown();
+        while (!executor.isTerminated()) {
+        }
+        System.out.println("Finished all threads");
+    }
+}
+```
+
+## 27、Atomic原子类
+- 基本类型
+  - AtomicInteger：整形原子类
+  - AtomicLong：长整型原子类
+  - AtomicBoolean：布尔型原子类
+- 数组类型
+  - AtomicIntegerArray：整形数组原子类
+  - AtomicLongArray：长整形数组原子类
+  - AtomicReferenceArray：引用类型数组原子类
+- 引用类型
+  - AtomicReference：引用类型原子类
+  - AtomicStampedReference：原子更新带有版本号的引用类型。该类将整数值与引用关联起来，可用于解决原子的更新数据和数据的版本号，可以解决使用 CAS 进行原子更新时可能出现的 ABA 问题。
+  - AtomicMarkableReference ：原子更新带有标记位的引用类型
+- 对象的属性修改类型
+  - AtomicIntegerFieldUpdater：原子更新整形字段的更新器
+  - AtomicLongFieldUpdater：原子更新长整形字段的更新器
+  - AtomicReferenceFieldUpdater：原子更新引用类型字段的更新器
+## 28、AtomicInteger的使用以及原理
+AtomicInteger类常用方法
+```java
+public final int get() //获取当前的值
+public final int getAndSet(int newValue)//获取当前的值，并设置新的值
+public final int getAndIncrement()//获取当前的值，并自增
+public final int getAndDecrement() //获取当前的值，并自减
+public final int getAndAdd(int delta) //获取当前的值，并加上预期的值
+boolean compareAndSet(int expect, int update) //如果输入的数值等于预期值，则以原子方式将该值设置为输入值（update）
+public final void lazySet(int newValue)//最终设置为newValue,使用 lazySet 设置之后可能导致其他线程在之后的一小段时间内还是可以读到旧的值。
+```
+
+AtomicInteger类主要利用CAS(compare and swap)+volatile和native方法来保证原子操作，从而避免synchronized的高开销，执行效率大为提升。
+
+CAS的原理是拿期望的值和原本的一个值作比较，如果相同则更新成新的值。UnSafe类的objectFieldOffset()方法是一个本地方法，这个方法是用来拿到“原来的值”的内存地址，返回值是valueOffset。另外value是一个volatile变量，在内存中可见，因此JVM可以保证任何时刻任何线程总能拿到该变量的最新值。
+
+## 29、AQS介绍
+AQS全称AbstractQueuedSynchronizer，这个类在java.util.concurrent.locks包下面
 
 
 
